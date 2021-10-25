@@ -1,0 +1,86 @@
+
+####### Flux Query Used For Visualizing Commits & Progress #######
+
+new_commits = from(bucket: "blindspot")
+  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)
+  |> filter(fn: (r) => r["_measurement"] == "commit_details" and 
+  r["_field"] == "status")
+  |> group()
+  |> aggregateWindow(every: 1d, fn:count)
+  |> keep(columns: ["_time", "_value"])
+  |> rename(columns:{"_value":"NewCommits"})
+
+merged_commits = from(bucket: "blindspot")
+  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)
+  |> filter(fn: (r) => r["_measurement"] == "commit_details" and
+  r["_field"] == "submitted_on")
+  |> toTime()
+  |> rename(columns: {"_time":"created", "_value":"_time"})
+  |> toInt()
+  |> group()
+  |> aggregateWindow(every: 1d, fn:count)
+  |> keep(columns: ["_time", "_value"])
+  |> rename(columns: {"_value": "MergedCommits"})
+
+join(tables: {key1: new_commits, key2: merged_commits}, on: ["_time"], method: "inner")
+  |> yield()
+
+
+####### Flux Query Used For Visualizing Velocity Of Delivery #######
+
+merged_commits = from(bucket: "blindspot")
+  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)
+  |> filter(fn: (r) => r["_measurement"] == "commits_review" and 
+  r["_field"] == "MergedCommits")
+  |> toInt()
+  |> group()
+  |> keep(columns: ["_time", "_value"])
+  |> rename(columns: {"_value":"MergedCommits"})
+
+avg_review_time = from(bucket: "blindspot")
+  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)
+  |> filter(fn: (r) => r["_measurement"] == "commits_review" and 
+  r["_field"] == "AverageReviewTime")
+  |> toInt()
+  |> group()
+  |> keep(columns: ["_time", "_value"])
+  |> rename(columns: {"_value":"AverageReviewTime"})
+
+comments_per_commit = from(bucket: "blindspot")
+  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)
+  |> filter(fn: (r) => r["_measurement"] == "commits_review" and 
+  r["_field"] == "CommentsPerCommit")
+  |> toInt()
+  |> group()
+  |> keep(columns: ["_time", "_value"])
+  |> rename(columns: {"_value":"CommentsPerCommit"})
+
+table1 = join(tables: {key1: merged_commits, key2: avg_review_time}, on: ["_time"], method: "inner")
+join(tables: {key1: table1, key2: comments_per_commit}, on: ["_time"], method: "inner")
+  |> yield()
+
+
+####### Flux Query Used For Visualizing LOC+/LOC- #######
+
+added_loc = from(bucket: "blindspot")
+  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)
+  |> filter(fn: (r) => r["_measurement"] == "commit_details" and 
+  r["_field"] == "insertions")
+  |> group()
+  |> aggregateWindow(every: 1d, fn:sum)
+  |> fill(column: "_value", value:0)
+  |> keep(columns: ["_time", "_value"])
+  |> rename(columns: {"_value":"LOC+"})
+
+deleted_loc = from(bucket: "blindspot")
+  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)
+  |> filter(fn: (r) => r["_measurement"] == "commit_details" and 
+  r["_field"] == "deletions")
+  |> group()
+  |> aggregateWindow(every: 1d, fn:sum)
+  |> fill(column: "_value", value:0)
+  |> keep(columns: ["_time", "_value"])
+  |> rename(columns: {"_value":"LOC-"})
+
+join(tables: {key1: added_loc, key2: deleted_loc}, on: ["_time"], method: "inner")
+  |> yield()
